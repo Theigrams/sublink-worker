@@ -159,9 +159,6 @@ export async function fetchSubscription(url, userAgent) {
             method: 'GET',
             headers: headers
         });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
         const text = await response.text();
         const decodedText = decodeContent(text);
 
@@ -188,15 +185,14 @@ export async function fetchSubscriptionWithFormat(url, userAgent) {
             method: 'GET',
             headers: headers
         });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+        const httpStatus = response.status;
+        const ok = response.ok;
         const text = await response.text();
         const errorMessage = extractBase64ErrorMessage(text);
         const content = decodeContent(text);
         const format = detectFormat(content);
 
-        return { content, format, url, errorMessage };
+        return { content, format, url, errorMessage, httpStatus, ok };
     } catch (error) {
         console.error('Error fetching subscription:', error);
         return null;

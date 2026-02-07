@@ -121,7 +121,7 @@ export class BaseConfigBuilder {
                         const beforeLen = parsedItems.length;
                         const fetchResult = await fetchSubscriptionWithFormat(trimmedUrl, this.userAgent);
                         if (fetchResult) {
-                            const { content, format, url: originalUrl, errorMessage } = fetchResult;
+                            const { content, format, url: originalUrl, errorMessage, httpStatus, ok } = fetchResult;
 
                             // If format is compatible with target client, use as provider
                             if (this.isCompatibleProviderFormat(format)) {
@@ -159,10 +159,16 @@ export class BaseConfigBuilder {
 
                             const added = parsedItems.length - beforeLen;
                             if (added <= 0) {
-                                const message =
-                                    (typeof errorMessage === 'string' && errorMessage.trim() && !errorMessage.includes('://'))
-                                        ? errorMessage
-                                        : 'No proxies could be parsed from this subscription (blocked/invalid or not reachable from Cloudflare Workers).';
+                                const parts = [];
+                                if (ok === false && typeof httpStatus === 'number') {
+                                    parts.push(`HTTP ${httpStatus}`);
+                                }
+                                if (typeof errorMessage === 'string' && errorMessage.trim() && !errorMessage.includes('://')) {
+                                    parts.push(errorMessage.trim());
+                                }
+                                const message = parts.length > 0
+                                    ? parts.join(' - ')
+                                    : 'No proxies could be parsed from this subscription (blocked/invalid or not reachable from Cloudflare Workers).';
                                 this.addSubscriptionWarning(originalUrl, message);
                             }
                         } else {
