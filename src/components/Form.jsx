@@ -1,10 +1,12 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
+import yaml from 'js-yaml';
 import { CustomRules } from './CustomRules.jsx';
 import { TextareaWithActions } from './TextareaWithActions.jsx';
 import { ValidatedTextarea } from './ValidatedTextarea.jsx';
 import { formLogicFn } from './formLogic.js';
 import { UNIFIED_RULES, PREDEFINED_RULE_SETS } from '../config/index.js';
+import { THEIGRAMS_CLASH_TEMPLATE } from '../config/clashTemplate.theigrams.js';
 
 const LINK_FIELDS = [
   { key: 'xray', labelKey: 'xrayLink' },
@@ -15,6 +17,10 @@ const LINK_FIELDS = [
 
 export const Form = (props) => {
   const { t } = props;
+
+  // Keep the default template close to what `/clash` uses (sanitized).
+  // This is injected into the frontend so users can easily tweak and save a private configId.
+  const defaultClashBaseConfig = yaml.dump(THEIGRAMS_CLASH_TEMPLATE, { lineWidth: -1 });
 
   const translations = {
     processing: t('processing'),
@@ -40,6 +46,8 @@ export const Form = (props) => {
   const scriptContent = `
     window.APP_TRANSLATIONS = ${JSON.stringify(translations)};
     window.PREDEFINED_RULE_SETS = ${JSON.stringify(PREDEFINED_RULE_SETS)};
+    window.DEFAULT_BASE_CONFIGS = window.DEFAULT_BASE_CONFIGS || {};
+    window.DEFAULT_BASE_CONFIGS.clash = ${JSON.stringify(defaultClashBaseConfig)};
     (${formLogicFn.toString()})();
   `;
 

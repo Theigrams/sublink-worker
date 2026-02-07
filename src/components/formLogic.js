@@ -44,6 +44,36 @@ export const formLogicFn = (t) => {
             shortenLinksText: '',
             shorteningText: '',
             showFullLinksText: '',
+            _lastConfigType: null,
+
+            getConfigEditorStorageKey(type) {
+                const safeType = (type || '').trim() || 'singbox';
+                return `configEditor_${safeType}`;
+            },
+
+            getDefaultBaseConfig(type) {
+                const defaults = window.DEFAULT_BASE_CONFIGS || {};
+                const value = defaults[type];
+                return typeof value === 'string' ? value : '';
+            },
+
+            loadConfigEditorForType(type) {
+                const key = this.getConfigEditorStorageKey(type);
+                const saved = localStorage.getItem(key);
+                if (saved !== null) return saved;
+
+                // Backward-compatible migration (legacy shared key).
+                const legacyType = localStorage.getItem('configType');
+                const legacyEditor = localStorage.getItem('configEditor');
+                if (legacyType === type && legacyEditor !== null) return legacyEditor;
+
+                return this.getDefaultBaseConfig(type);
+            },
+
+            saveConfigEditorForType(type, value) {
+                const key = this.getConfigEditorStorageKey(type);
+                localStorage.setItem(key, value ?? '');
+            },
 
             init() {
                 // Load translations
@@ -68,8 +98,9 @@ export const formLogicFn = (t) => {
                 this.externalController = localStorage.getItem('externalController') || '';
                 this.externalUiDownloadUrl = localStorage.getItem('externalUiDownloadUrl') || '';
                 this.customUA = localStorage.getItem('userAgent') || '';
-                this.configEditor = localStorage.getItem('configEditor') || '';
                 this.configType = localStorage.getItem('configType') || 'singbox';
+                this.configEditor = this.loadConfigEditorForType(this.configType);
+                this._lastConfigType = this.configType;
                 this.customShortCode = localStorage.getItem('customShortCode') || '';
                 const initialUrlParams = new URLSearchParams(window.location.search);
                 this.currentConfigId = initialUrlParams.get('configId') || '';
@@ -100,11 +131,15 @@ export const formLogicFn = (t) => {
                 this.$watch('externalUiDownloadUrl', val => localStorage.setItem('externalUiDownloadUrl', val));
                 this.$watch('customUA', val => localStorage.setItem('userAgent', val));
                 this.$watch('configEditor', val => {
-                    localStorage.setItem('configEditor', val);
+                    this.saveConfigEditorForType(this.configType, val);
                     this.resetConfigValidation();
                 });
                 this.$watch('configType', val => {
                     localStorage.setItem('configType', val);
+                    const previousType = this._lastConfigType || val;
+                    this.saveConfigEditorForType(previousType, this.configEditor);
+                    this.configEditor = this.loadConfigEditorForType(val);
+                    this._lastConfigType = val;
                     this.resetConfigValidation();
                 });
                 this.$watch('customShortCode', val => localStorage.setItem('customShortCode', val));
@@ -221,7 +256,7 @@ export const formLogicFn = (t) => {
             clearBaseConfig() {
                 if (confirm(window.APP_TRANSLATIONS.confirmClearConfig)) {
                     this.configEditor = '';
-                    localStorage.removeItem('configEditor');
+                    localStorage.removeItem(this.getConfigEditorStorageKey(this.configType));
                     this.currentConfigId = '';
                     this.updateConfigIdInUrl(null);
                 }
