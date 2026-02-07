@@ -47,7 +47,7 @@ describe('Auto Proxy Providers Detection', () => {
     });
 
     describe('Clash Builder', () => {
-        it('should use Clash URL as proxy-provider when format is Clash YAML', async () => {
+        it('should parse Clash YAML URL into proxies by default (provider mode disabled)', async () => {
             // Mock fetchSubscriptionWithFormat to return Clash format
             fetchSubscriptionWithFormat.mockResolvedValue({
                 content: mockClashYaml,
@@ -66,14 +66,42 @@ describe('Auto Proxy Providers Detection', () => {
             const yamlText = await builder.build();
             const config = yaml.load(yamlText);
 
-            // Should have proxy-providers
+            // No proxy-providers by default; proxies should be embedded.
+            expect(config['proxy-providers']).toBeUndefined();
+            expect(Array.isArray(config.proxies)).toBeTruthy();
+            expect(config.proxies.map(p => p?.name)).toContain('HK-Node');
+            expect(config.proxies.map(p => p?.name)).toContain('JP-Node');
+        });
+
+        it('should use Clash URL as proxy-provider when provider mode is enabled', async () => {
+            fetchSubscriptionWithFormat.mockResolvedValue({
+                content: mockClashYaml,
+                format: 'clash',
+                url: 'https://example.com/clash-sub?token=xxx'
+            });
+
+            const builder = new ClashConfigBuilder(
+                'https://example.com/clash-sub?token=xxx',
+                [],
+                [],
+                null,
+                'zh-CN',
+                'test-agent',
+                false, // groupByCountry
+                false, // enableClashUI
+                null,  // externalController
+                null,  // externalUiDownloadUrl
+                true,  // includeAutoSelect
+                { useProviders: true }
+            );
+            const yamlText = await builder.build();
+            const config = yaml.load(yamlText);
+
             expect(config['proxy-providers']).toBeDefined();
             expect(Object.keys(config['proxy-providers'])).toHaveLength(1);
             expect(config['proxy-providers']._auto_provider_1).toBeDefined();
             expect(config['proxy-providers']._auto_provider_1.url).toBe('https://example.com/clash-sub?token=xxx');
-            expect(config['proxy-providers']._auto_provider_1.type).toBe('http');
 
-            // proxy-groups should have 'use' field
             const nodeSelect = config['proxy-groups'].find(g => g.name === '🚀 节点选择');
             expect(nodeSelect.use).toContain('_auto_provider_1');
         });
@@ -217,7 +245,13 @@ describe('Auto Proxy Providers Detection', () => {
                 [],
                 null,
                 'zh-CN',
-                'test-agent'
+                'test-agent',
+                false,
+                false,
+                null,
+                null,
+                true,
+                { useProviders: true }
             );
             const yamlText = await builder.build();
             const config = yaml.load(yamlText);
@@ -254,7 +288,13 @@ describe('Auto Proxy Providers Detection', () => {
                 [],
                 baseConfig,
                 'zh-CN',
-                'test-agent'
+                'test-agent',
+                false,
+                false,
+                null,
+                null,
+                true,
+                { useProviders: true }
             );
             const yamlText = await builder.build();
             const config = yaml.load(yamlText);

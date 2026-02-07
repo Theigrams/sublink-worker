@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import yaml from 'js-yaml';
 import { createApp } from '../src/app/createApp.jsx';
 import { MemoryKVAdapter } from '../src/adapters/kv/memoryKv.js';
 
@@ -74,7 +75,13 @@ describe('Worker', () => {
         // Clash builder returns text/yaml
         expect(res.headers.get('content-type')).toContain('text/yaml');
         const text = await res.text();
-        expect(text).toContain('proxies:');
+        const built = yaml.load(text);
+        expect(built).toHaveProperty('proxies');
+        expect(Array.isArray(built.proxies)).toBeTruthy();
+        expect(built.proxies.length).toBeGreaterThan(0);
+
+        // Template marker (default base config for /clash)
+        expect(built['mixed-port']).toBe(7897);
     });
 
     it('GET /shorten-v2 returns short code', async () => {

@@ -40,7 +40,7 @@ function supportsMrsFormat(userAgent) {
 }
 
 export class ClashConfigBuilder extends BaseConfigBuilder {
-    constructor(inputString, selectedRules, customRules, baseConfig, lang, userAgent, groupByCountry = false, enableClashUI = false, externalController, externalUiDownloadUrl, includeAutoSelect = true) {
+    constructor(inputString, selectedRules, customRules, baseConfig, lang, userAgent, groupByCountry = false, enableClashUI = false, externalController, externalUiDownloadUrl, includeAutoSelect = true, options = {}) {
         if (!baseConfig) {
             baseConfig = CLASH_CONFIG;
         }
@@ -52,6 +52,27 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
         this.enableClashUI = enableClashUI;
         this.externalController = externalController;
         this.externalUiDownloadUrl = externalUiDownloadUrl;
+        this.rulesMode = options?.rulesMode === 'template' ? 'template' : 'engine';
+        this.useProviders = !!options?.useProviders;
+    }
+
+    /**
+     * Template mode skips auto group generation to preserve the template shape and language.
+     * We still need to merge any user-provided proxy-groups extracted from the input.
+     */
+    async build() {
+        const customItems = await this.parseCustomItems();
+        this.addCustomItems(customItems);
+
+        if (this.rulesMode === 'template') {
+            if (this.pendingUserProxyGroups && this.pendingUserProxyGroups.length > 0) {
+                this.mergeUserProxyGroups(this.pendingUserProxyGroups);
+            }
+            return this.formatConfig();
+        }
+
+        this.addSelectors();
+        return this.formatConfig();
     }
 
     /**
@@ -60,7 +81,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
      * @returns {boolean} - True if format is Clash YAML
      */
     isCompatibleProviderFormat(format) {
-        return format === 'clash';
+        return this.useProviders && format === 'clash';
     }
 
     /**
@@ -583,7 +604,156 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
         return generateRules(this.selectedRules, this.customRules);
     }
 
+    replaceUrlExt(value, fromExt, toExt) {
+        if (typeof value !== 'string') return value;
+        const [beforeHash, hash] = value.split('#', 2);
+        const [beforeQuery, query] = beforeHash.split('?', 2);
+        if (beforeQuery.endsWith(fromExt)) {
+            const replaced = beforeQuery.slice(0, -fromExt.length) + toExt;
+            return replaced + (query ? `?${query}` : '') + (hash ? `#${hash}` : '');
+        }
+        return value;
+    }
+
+    applyTemplateRuleProvidersFormat(useMrs) {
+        const providers = this.config?.['rule-providers'];
+        if (!providers || typeof providers !== 'object') return;
+
+        const fromExt = useMrs ? '.yaml' : '.mrs';
+        const toExt = useMrs ? '.mrs' : '.yaml';
+        const format = useMrs ? 'mrs' : 'yaml';
+
+        Object.values(providers).forEach(provider => {
+            if (!provider || typeof provider !== 'object') return;
+            provider.format = format;
+            if (typeof provider.url === 'string') {
+                provider.url = this.replaceUrlExt(provider.url, fromExt, toExt);
+            }
+            if (typeof provider.path === 'string') {
+                provider.path = this.replaceUrlExt(provider.path, fromExt, toExt);
+            }
+        });
+    }
+
+    compileMihomoFilterRegex(filter) {
+        if (typeof filter !== 'string') return null;
+        const trimmed = filter.trim();
+        if (!trimmed) return null;
+
+        // mihomo uses `(?i)` for case-insensitive. JS RegExp doesn't support inline flags.
+        let source = trimmed;
+        let flags = '';
+        if (source.includes('(?i)')) {
+            source = source.replace(/\(\?i\)/g, '');
+            flags += 'i';
+        }
+
+        try {
+            return new RegExp(source, flags);
+        } catch {
+            return null;
+        }
+    }
+
+    materializeTemplateProxyGroups() {
+        const groups = this.config?.['proxy-groups'];
+        if (!Array.isArray(groups) || groups.length === 0) return;
+
+        const proxyNames = (this.config.proxies || [])
+            .map(p => (typeof p?.name === 'string' ? p.name.trim() : ''))
+            .filter(Boolean);
+
+        const uniqueInOrder = (arr) => {
+            const seen = new Set();
+            const out = [];
+            (arr || []).forEach(item => {
+                if (typeof item !== 'string') return;
+                const value = item.trim();
+                if (!value) return;
+                if (seen.has(value)) return;
+                seen.add(value);
+                out.push(value);
+            });
+            return out;
+        };
+
+        groups.forEach(group => {
+            if (!group || typeof group !== 'object') return;
+
+            const includeAll = group['include-all-proxies'] === true;
+            const filter = group.filter;
+
+            if (typeof filter === 'string' && filter.trim()) {
+                const regex = this.compileMihomoFilterRegex(filter);
+                if (regex) {
+                    const matched = proxyNames.filter(name => regex.test(name));
+                    group.proxies = uniqueInOrder(matched.length > 0 ? matched : (includeAll ? proxyNames : matched));
+                }
+            } else if (includeAll) {
+                group.proxies = uniqueInOrder(proxyNames);
+            }
+
+            // Drop mihomo-only convenience fields so the output is portable.
+            delete group.filter;
+            delete group['include-all-proxies'];
+            delete group.use;
+        });
+    }
+
     formatConfig() {
+        const canUseTemplateRules =
+            this.rulesMode === 'template' &&
+            this.config &&
+            typeof this.config['rule-providers'] === 'object' &&
+            Array.isArray(this.config.rules);
+
+        if (canUseTemplateRules) {
+            const useMrs = supportsMrsFormat(this.userAgent);
+            this.applyTemplateRuleProvidersFormat(useMrs);
+
+            // Materialize dynamic proxy-groups (filter/include-all-proxies) into explicit proxies list.
+            this.materializeTemplateProxyGroups();
+
+            // Fill empty url-test/fallback groups to avoid invalid configs.
+            this.validateProxyGroups();
+
+            sanitizeClashProxyGroups(this.config);
+
+            // Ensure we have a fallback MATCH rule at the end.
+            const hasMatch = (this.config.rules || []).some(r =>
+                typeof r === 'string' && r.trim().toUpperCase().startsWith('MATCH,')
+            );
+            if (!hasMatch) {
+                this.config.rules = [
+                    ...(this.config.rules || []),
+                    `MATCH,${this.t('outboundNames.Fall Back')}`
+                ];
+            }
+
+            // Enable Clash UI (external controller/dashboard) when requested or when custom UI params are provided
+            if (this.enableClashUI || this.externalController || this.externalUiDownloadUrl) {
+                const defaultController = '0.0.0.0:9090';
+                const defaultUiPath = './ui';
+                const defaultUiName = 'zashboard';
+                const defaultUiUrl = 'https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip';
+                const defaultSecret = '';
+
+                const controller = this.externalController || this.config['external-controller'] || defaultController;
+                const uiPath = this.config['external-ui'] || defaultUiPath;
+                const uiName = this.config['external-ui-name'] || defaultUiName;
+                const uiUrl = this.externalUiDownloadUrl || this.config['external-ui-url'] || defaultUiUrl;
+                const secret = this.config['secret'] ?? defaultSecret;
+
+                this.config['external-controller'] = controller;
+                this.config['external-ui'] = uiPath;
+                this.config['external-ui-name'] = uiName;
+                this.config['external-ui-url'] = uiUrl;
+                this.config['secret'] = secret;
+            }
+
+            return yaml.dump(this.config);
+        }
+
         const rules = this.generateRules();
         const useMrs = supportsMrsFormat(this.userAgent);
         const { site_rule_providers, ip_rule_providers } = generateClashRuleSets(this.selectedRules, this.customRules, useMrs);

@@ -17,6 +17,7 @@ import { ConfigStorageService } from '../services/configStorageService.js';
 import { ServiceError, MissingDependencyError } from '../services/errors.js';
 import { normalizeRuntime } from '../runtime/runtimeConfig.js';
 import { PREDEFINED_RULE_SETS, SING_BOX_CONFIG, SING_BOX_CONFIG_V1_11 } from '../config/index.js';
+import { THEIGRAMS_CLASH_TEMPLATE } from '../config/clashTemplate.theigrams.js';
 
 const DEFAULT_USER_AGENT = 'curl/7.74.0';
 
@@ -127,8 +128,6 @@ export function createApp(bindings = {}) {
                 return c.text('Missing config parameter', 400);
             }
 
-            const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
-            const customRules = parseJsonArray(c.req.query('customRules'));
             const ua = c.req.query('ua') || DEFAULT_USER_AGENT;
             const groupByCountry = parseBooleanFlag(c.req.query('group_by_country'));
             const includeAutoSelect = c.req.query('include_auto_select') !== 'false';
@@ -138,10 +137,26 @@ export function createApp(bindings = {}) {
             const configId = c.req.query('configId');
             const lang = c.get('lang');
 
+            // Clash template mode (default): use the built-in sanitized template and embed proxies server-side.
+            // Rollback/compat: `clash_mode=engine` uses existing rules engine + optional proxy-providers.
+            const clashMode = c.req.query('clash_mode') || 'template';
+            const rulesMode = clashMode === 'engine' ? 'engine' : 'template';
+            const providersEnabled = parseBooleanFlag(c.req.query('clash_providers'));
+
+            const selectedRules = rulesMode === 'template'
+                ? []
+                : parseSelectedRules(c.req.query('selectedRules'));
+            const customRules = rulesMode === 'template'
+                ? []
+                : parseJsonArray(c.req.query('customRules'));
+
             let baseConfig;
             if (configId) {
                 const storage = requireConfigStorage(services.configStorage);
                 baseConfig = await storage.getConfigById(configId);
+            }
+            if (!baseConfig) {
+                baseConfig = THEIGRAMS_CLASH_TEMPLATE;
             }
 
             const builder = new ClashConfigBuilder(
@@ -155,7 +170,12 @@ export function createApp(bindings = {}) {
                 enableClashUI,
                 externalController,
                 externalUiDownloadUrl,
-                includeAutoSelect
+                includeAutoSelect,
+                {
+                    rulesMode,
+                    // Only meaningful for engine mode; template mode always embeds proxies.
+                    useProviders: rulesMode === 'engine' && providersEnabled
+                }
             );
             await builder.build();
             return c.text(builder.formatConfig(), 200, {
