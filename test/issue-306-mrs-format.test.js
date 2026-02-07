@@ -14,17 +14,15 @@ import { generateClashRuleSets } from '../src/config/ruleGenerators.js';
 
 describe('Issue #306: MRS format compatibility for legacy Clash clients', () => {
   
-  // 注意：当前 Clash 内置“规则选择”已切换为 ACL4SSR rule-providers（YAML/classical）。
-  // ACL4SSR 不提供 mrs 格式，因此这些内置 provider 将始终输出 yaml（与 useMrs 无关）。
-  // 未映射的/custom 的 rule-providers 仍会走原 MetaCubeX 逻辑并根据 useMrs 选择 mrs/yaml。
+  // 测试generateClashRuleSets函数默认行为（useMrs=true时用mrs）
   describe('generateClashRuleSets default behavior', () => {
-    it('should generate rule-providers with yaml format for ACL4SSR-mapped providers even when useMrs=true', () => {
+    it('should generate rule-providers with mrs format when useMrs=true', () => {
       const { site_rule_providers } = generateClashRuleSets(['AI Services'], [], true);
       
       expect(site_rule_providers['category-ai-!cn']).toBeDefined();
       const aiProvider = site_rule_providers['category-ai-!cn'];
-      expect(aiProvider.format).toBe('yaml');
-      expect(aiProvider.url).toContain('.yaml');
+      expect(aiProvider.format).toBe('mrs');
+      expect(aiProvider.url).toContain('.mrs');
     });
 
     it('should generate rule-providers with yaml format when useMrs=false', () => {
@@ -96,7 +94,7 @@ proxies:
     });
 
     modernUserAgents.forEach(ua => {
-      it(`should use yaml format for modern client: ${ua} (ACL4SSR providers are yaml-only)`, async () => {
+      it(`should use mrs format for modern client: ${ua}`, async () => {
         const input = `
 proxies:
   - name: test-ss
@@ -120,9 +118,9 @@ proxies:
         const aiProvider = config['rule-providers']['category-ai-!cn'];
         expect(aiProvider).toBeDefined();
         
-        // 期望：ACL4SSR providers 使用 yaml 格式
-        expect(aiProvider.format).toBe('yaml');
-        expect(aiProvider.url).toContain('.yaml');
+        // 期望：现代客户端使用mrs格式
+        expect(aiProvider.format).toBe('mrs');
+        expect(aiProvider.url).toContain('.mrs');
       });
     });
   });
