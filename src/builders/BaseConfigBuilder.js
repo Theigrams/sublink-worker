@@ -15,6 +15,35 @@ export class BaseConfigBuilder {
         this.groupByCountry = groupByCountry;
         this.includeAutoSelect = includeAutoSelect;
         this.providerUrls = [];  // URLs to use as providers (auto-sync)
+        this.subscriptionWarnings = [];
+        this._subscriptionWarningKeys = new Set();
+    }
+
+    sanitizeUrlForLog(value) {
+        if (typeof value !== 'string' || !value.trim()) return '';
+        try {
+            const url = new URL(value);
+            return `${url.origin}${url.pathname}`;
+        } catch {
+            return value.split('?')[0].trim();
+        }
+    }
+
+    addSubscriptionWarning(url, message) {
+        const safeUrl = this.sanitizeUrlForLog(url);
+        const safeMessage = typeof message === 'string' ? message.trim() : '';
+        if (!safeUrl || !safeMessage) return;
+
+        const key = `${safeUrl}::${safeMessage}`;
+        if (this._subscriptionWarningKeys.has(key)) return;
+        this._subscriptionWarningKeys.add(key);
+
+        // Hard cap to avoid huge outputs.
+        if (this.subscriptionWarnings.length >= 10) return;
+        this.subscriptionWarnings.push({
+            url: safeUrl,
+            message: safeMessage.slice(0, 200)
+        });
     }
 
     async build() {
@@ -89,9 +118,10 @@ export class BaseConfigBuilder {
                     const { fetchSubscriptionWithFormat } = await import('../parsers/subscription/httpSubscriptionFetcher.js');
 
                     try {
+                        const beforeLen = parsedItems.length;
                         const fetchResult = await fetchSubscriptionWithFormat(trimmedUrl, this.userAgent);
                         if (fetchResult) {
-                            const { content, format, url: originalUrl } = fetchResult;
+                            const { content, format, url: originalUrl, errorMessage } = fetchResult;
 
                             // If format is compatible with target client, use as provider
                             if (this.isCompatibleProviderFormat(format)) {
@@ -112,7 +142,6 @@ export class BaseConfigBuilder {
                                         }
                                     });
                                 }
-                                continue;
                             }
                             // Handle array of URIs or other formats
                             if (Array.isArray(result)) {
@@ -127,9 +156,21 @@ export class BaseConfigBuilder {
                                     }
                                 }
                             }
+
+                            const added = parsedItems.length - beforeLen;
+                            if (added <= 0) {
+                                const message =
+                                    (typeof errorMessage === 'string' && errorMessage.trim() && !errorMessage.includes('://'))
+                                        ? errorMessage
+                                        : 'No proxies could be parsed from this subscription (blocked/invalid or not reachable from Cloudflare Workers).';
+                                this.addSubscriptionWarning(originalUrl, message);
+                            }
+                        } else {
+                            this.addSubscriptionWarning(trimmedUrl, 'Failed to fetch subscription.');
                         }
                     } catch (error) {
                         console.error('Error processing HTTP subscription:', error);
+                        this.addSubscriptionWarning(trimmedUrl, 'Error processing subscription.');
                     }
                     continue;
                 }

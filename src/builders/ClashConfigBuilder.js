@@ -700,6 +700,33 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
         });
     }
 
+    enableUdpByDefault() {
+        const proxies = this.config?.proxies;
+        if (!Array.isArray(proxies) || proxies.length === 0) return;
+
+        // Most Clash-compatible proxy types support UDP, but many subscriptions omit it.
+        // Enable it by default unless explicitly specified.
+        const udpCapableTypes = new Set(['ss', 'vmess', 'vless', 'trojan', 'socks5', 'http']);
+        proxies.forEach(proxy => {
+            if (!proxy || typeof proxy !== 'object') return;
+            if (!udpCapableTypes.has(proxy.type)) return;
+            if (typeof proxy.udp !== 'undefined') return;
+            proxy.udp = true;
+        });
+    }
+
+    formatSubscriptionWarningsAsYamlComments() {
+        const warnings = this.subscriptionWarnings;
+        if (!Array.isArray(warnings) || warnings.length === 0) return '';
+
+        const lines = [
+            '# sublink-worker warnings:',
+            ...warnings.map(w => `# - ${w.url}: ${w.message}`),
+            '#'
+        ];
+        return lines.join('\n') + '\n';
+    }
+
     formatConfig() {
         const canUseTemplateRules =
             this.rulesMode === 'template' &&
@@ -751,7 +778,9 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                 this.config['secret'] = secret;
             }
 
-            return yaml.dump(this.config);
+            this.enableUdpByDefault();
+            const yamlText = yaml.dump(this.config);
+            return this.formatSubscriptionWarningsAsYamlComments() + yamlText;
         }
 
         const rules = this.generateRules();
@@ -802,6 +831,8 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
             this.config['secret'] = secret;
         }
 
-        return yaml.dump(this.config);
+        this.enableUdpByDefault();
+        const yamlText = yaml.dump(this.config);
+        return this.formatSubscriptionWarningsAsYamlComments() + yamlText;
     }
 }

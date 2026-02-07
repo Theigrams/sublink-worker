@@ -79,6 +79,7 @@ describe('Worker', () => {
         expect(built).toHaveProperty('proxies');
         expect(Array.isArray(built.proxies)).toBeTruthy();
         expect(built.proxies.length).toBeGreaterThan(0);
+        expect(built.proxies[0]).toHaveProperty('udp', true);
 
         // Template marker (default base config for /clash)
         expect(built['mixed-port']).toBe(7897);

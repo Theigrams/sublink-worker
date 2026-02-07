@@ -1,6 +1,53 @@
 import { decodeBase64 } from '../../utils.js';
 import { parseSubscriptionContent } from './subscriptionContentParser.js';
 
+function tryUrlDecode(value) {
+    if (typeof value !== 'string' || !value.includes('%')) return value;
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+}
+
+function looksLikeBase64(value) {
+    const compact = String(value || '').trim().replace(/[\r\n\s]+/g, '');
+    if (compact.length < 16) return false;
+    // Standard + urlsafe base64 chars, allow up to 2 '=' at the end.
+    return /^[A-Za-z0-9+/_-]+={0,2}$/.test(compact);
+}
+
+function decodeBase64WithPadding(value) {
+    let compact = String(value || '').trim().replace(/[\r\n\s]+/g, '');
+    // Normalize urlsafe base64 to standard
+    compact = compact.replace(/-/g, '+').replace(/_/g, '/');
+    const mod = compact.length % 4;
+    if (mod !== 0) {
+        compact += '='.repeat(4 - mod);
+    }
+    return decodeBase64(compact);
+}
+
+function extractBase64ErrorMessage(text) {
+    const raw = typeof text === 'string' ? text : '';
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (!looksLikeBase64(trimmed)) return null;
+
+    try {
+        const decoded = decodeBase64WithPadding(trimmed);
+        const decodedText = String(tryUrlDecode(decoded) || '').trim();
+        if (!decodedText) return null;
+        if (decodedText.length > 200) return null;
+        // Avoid leaking real subscription payloads.
+        if (decodedText.includes('://')) return null;
+        if (!/(error|fail|forbidden|denied|unauthor|invalid|code)/i.test(decodedText)) return null;
+        return decodedText.replace(/\s+/g, ' ').trim();
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Decode content with a conservative strategy:
  * - If it already looks like YAML/JSON/INI/URI list, keep as-is (optionally URL-decode).
@@ -13,15 +60,6 @@ function decodeContent(text) {
     const raw = typeof text === 'string' ? text : '';
     const trimmed = raw.trim();
     if (!trimmed) return '';
-
-    const tryUrlDecode = (value) => {
-        if (typeof value !== 'string' || !value.includes('%')) return value;
-        try {
-            return decodeURIComponent(value);
-        } catch {
-            return value;
-        }
-    };
 
     const looksLikeJson = (value) => {
         const s = (value || '').trim();
@@ -52,24 +90,6 @@ function decodeContent(text) {
             return Array.isArray(parsed.proxies) && parsed.proxies.length > 0;
         }
         return false;
-    };
-
-    const looksLikeBase64 = (value) => {
-        const compact = String(value || '').trim().replace(/[\r\n\s]+/g, '');
-        if (compact.length < 16) return false;
-        // Standard + urlsafe base64 chars, allow up to 2 '=' at the end.
-        return /^[A-Za-z0-9+/_-]+={0,2}$/.test(compact);
-    };
-
-    const decodeBase64WithPadding = (value) => {
-        let compact = String(value || '').trim().replace(/[\r\n\s]+/g, '');
-        // Normalize urlsafe base64 to standard
-        compact = compact.replace(/-/g, '+').replace(/_/g, '/');
-        const mod = compact.length % 4;
-        if (mod !== 0) {
-            compact += '='.repeat(4 - mod);
-        }
-        return decodeBase64(compact);
     };
 
     // First try URL decoding (some sources URL-encode the whole payload).
@@ -172,10 +192,11 @@ export async function fetchSubscriptionWithFormat(url, userAgent) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const text = await response.text();
+        const errorMessage = extractBase64ErrorMessage(text);
         const content = decodeContent(text);
         const format = detectFormat(content);
 
-        return { content, format, url };
+        return { content, format, url, errorMessage };
     } catch (error) {
         console.error('Error fetching subscription:', error);
         return null;
