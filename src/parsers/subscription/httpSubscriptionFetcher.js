@@ -48,6 +48,17 @@ function extractBase64ErrorMessage(text) {
     }
 }
 
+function extractPlainErrorMessage(text) {
+    const raw = typeof text === 'string' ? text : '';
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (trimmed.length > 200) return null;
+    // Avoid leaking real subscription payloads.
+    if (trimmed.includes('://')) return null;
+    if (!/(error|fail|forbidden|denied|unauthor|invalid|code)/i.test(trimmed)) return null;
+    return trimmed.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Decode content with a conservative strategy:
  * - If it already looks like YAML/JSON/INI/URI list, keep as-is (optionally URL-decode).
@@ -188,7 +199,7 @@ export async function fetchSubscriptionWithFormat(url, userAgent) {
         const httpStatus = response.status;
         const ok = response.ok;
         const text = await response.text();
-        const errorMessage = extractBase64ErrorMessage(text);
+        const errorMessage = extractBase64ErrorMessage(text) || extractPlainErrorMessage(text);
         const content = decodeContent(text);
         const format = detectFormat(content);
 
