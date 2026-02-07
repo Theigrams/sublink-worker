@@ -6,6 +6,78 @@
 import { UNIFIED_RULES, PREDEFINED_RULE_SETS, SITE_RULE_SETS, IP_RULE_SETS, CLASH_SITE_RULE_SETS, CLASH_IP_RULE_SETS } from './rules.js';
 import { SITE_RULE_SET_BASE_URL, IP_RULE_SET_BASE_URL, CLASH_SITE_RULE_SET_BASE_URL, CLASH_IP_RULE_SET_BASE_URL } from './ruleUrls.js';
 
+// Clash (ACL4SSR) rule provider sources.
+// We only switch built-in rule-selection tags to ACL4SSR; unknown/custom tags fall back to the existing MetaCubeX providers.
+const ACL4SSR_PROVIDER_BASE_URL = 'https://gh-proxy.com/https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/';
+const ACL4SSR_RULESET_BASE_URL = `${ACL4SSR_PROVIDER_BASE_URL}Ruleset/`;
+
+// Map our internal tags (geosite/geoip-ish) to ACL4SSR provider YAML files.
+// If a tag isn't mapped, we keep using the existing MetaCubeX meta-rules-dat providers to preserve compatibility.
+const ACL4SSR_TAG_MAP = {
+	// Ads / AI
+	'category-ads-all': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'BanAD.yaml' },
+	'category-ai-!cn': { base: ACL4SSR_RULESET_BASE_URL, file: 'AI.yaml' },
+
+	// China / LAN / Global
+	'geolocation-!cn': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'ProxyGFWlist.yaml' },
+	'geolocation-cn': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'ChinaDomain.yaml' },
+	'cn': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'ChinaDomain.yaml' },
+	'private': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'LocalAreaNetwork.yaml' },
+
+	// Common services
+	'bilibili': { base: ACL4SSR_RULESET_BASE_URL, file: 'Bilibili.yaml' },
+	'youtube': { base: ACL4SSR_RULESET_BASE_URL, file: 'YouTube.yaml' },
+	'google': { base: ACL4SSR_RULESET_BASE_URL, file: 'Google.yaml' },
+	'telegram': { base: ACL4SSR_RULESET_BASE_URL, file: 'Telegram.yaml' },
+	'github': { base: ACL4SSR_RULESET_BASE_URL, file: 'Github.yaml' },
+	'microsoft': { base: ACL4SSR_RULESET_BASE_URL, file: 'Microsoft.yaml' },
+	'apple': { base: ACL4SSR_RULESET_BASE_URL, file: 'Apple.yaml' },
+
+	// Social
+	'facebook': { base: ACL4SSR_RULESET_BASE_URL, file: 'Facebook.yaml' },
+	'instagram': { base: ACL4SSR_RULESET_BASE_URL, file: 'Instagram.yaml' },
+	'twitter': { base: ACL4SSR_RULESET_BASE_URL, file: 'Twitter.yaml' },
+	'tiktok': { base: ACL4SSR_RULESET_BASE_URL, file: 'TikTok.yaml' },
+
+	// Streaming
+	'netflix': { base: ACL4SSR_RULESET_BASE_URL, file: 'Netflix.yaml' },
+	'disney': { base: ACL4SSR_RULESET_BASE_URL, file: 'DisneyPlus.yaml' },
+	'hbo': { base: ACL4SSR_RULESET_BASE_URL, file: 'HBO.yaml' },
+	'amazon': { base: ACL4SSR_RULESET_BASE_URL, file: 'Amazon.yaml' },
+	'bahamut': { base: ACL4SSR_RULESET_BASE_URL, file: 'Bahamut.yaml' },
+	// Best-effort mapping (ACL4SSR doesn't have a plain Hulu.yaml; HuluJapan exists)
+	'hulu': { base: ACL4SSR_RULESET_BASE_URL, file: 'HuluJapan.yaml' },
+
+	// Gaming
+	'steam': { base: ACL4SSR_RULESET_BASE_URL, file: 'Steam.yaml' },
+	'epicgames': { base: ACL4SSR_RULESET_BASE_URL, file: 'Epic.yaml' },
+	'blizzard': { base: ACL4SSR_RULESET_BASE_URL, file: 'Blizzard.yaml' },
+	// EA-ish best-effort mapping
+	'ea': { base: ACL4SSR_RULESET_BASE_URL, file: 'Origin.yaml' },
+
+	// Education best-effort (use Scholar)
+	'coursera': { base: ACL4SSR_RULESET_BASE_URL, file: 'Scholar.yaml' },
+	'edx': { base: ACL4SSR_RULESET_BASE_URL, file: 'Scholar.yaml' },
+	'udemy': { base: ACL4SSR_RULESET_BASE_URL, file: 'Scholar.yaml' },
+	'khanacademy': { base: ACL4SSR_RULESET_BASE_URL, file: 'Scholar.yaml' },
+	'category-scholar-!cn': { base: ACL4SSR_RULESET_BASE_URL, file: 'Scholar.yaml' },
+};
+
+// IP-only tags mapping (we still register these as rule-providers).
+// NOTE: ACL4SSR providers are usually "classical" yaml; we still suffix "-ip" for tag uniqueness.
+const ACL4SSR_IP_TAG_MAP = {
+	'cn': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'ChinaCompanyIp.yaml' },
+	'google': { base: ACL4SSR_RULESET_BASE_URL, file: 'GoogleCNProxyIP.yaml' },
+	// Telegram doesn't have a dedicated CIDR provider in ACL4SSR; fall back to Telegram.yaml (classical).
+	'telegram': { base: ACL4SSR_RULESET_BASE_URL, file: 'Telegram.yaml' },
+	'private': { base: ACL4SSR_PROVIDER_BASE_URL, file: 'LocalAreaNetwork.yaml' },
+};
+
+function getAcl4ssrProviderForTag(tag, kind /* 'site'|'ip' */) {
+	const m = kind === 'ip' ? ACL4SSR_IP_TAG_MAP : ACL4SSR_TAG_MAP;
+	return m[tag] || null;
+}
+
 // Helper function to get outbounds based on selected rule names
 export function getOutbounds(selectedRuleNames) {
 	if (!selectedRuleNames || !Array.isArray(selectedRuleNames)) {
@@ -162,6 +234,20 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 	const ip_rule_providers = {};
 
 	Array.from(siteRuleSets).forEach(rule => {
+		const acl = getAcl4ssrProviderForTag(rule, 'site');
+		if (acl) {
+			site_rule_providers[rule] = {
+				type: 'http',
+				format: 'yaml',
+				behavior: 'classical',
+				url: `${acl.base}${acl.file}`,
+				path: `./ruleset/acl4ssr/${rule}.yaml`,
+				interval: 86400
+			};
+			return;
+		}
+
+		// Fallback: MetaCubeX providers (preserve existing behavior for custom/unmapped tags)
 		site_rule_providers[rule] = {
 			type: 'http',
 			format: format,
@@ -173,26 +259,53 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 	});
 
 	Array.from(ipRuleSets).forEach(rule => {
-		ip_rule_providers[rule] = {
+		const tag = `${rule}-ip`;
+		const acl = getAcl4ssrProviderForTag(rule, 'ip');
+		if (acl) {
+			ip_rule_providers[tag] = {
+				type: 'http',
+				format: 'yaml',
+				behavior: 'classical',
+				url: `${acl.base}${acl.file}`,
+				path: `./ruleset/acl4ssr/${tag}.yaml`,
+				interval: 86400
+			};
+			return;
+		}
+
+		// Fallback: MetaCubeX providers (preserve existing behavior for custom/unmapped tags)
+		ip_rule_providers[tag] = {
 			type: 'http',
 			format: format,
 			behavior: 'ipcidr',
 			url: `${CLASH_IP_RULE_SET_BASE_URL}${rule}${ext}`,
-			path: `./ruleset/${rule}${ext}`,
+			path: `./ruleset/${tag}${ext}`,
 			interval: 86400
 		};
 	});
 
 	// Add Non-China rule set if not included
 	if (!selectedRules.includes('Non-China')) {
-		site_rule_providers['geolocation-!cn'] = {
-			type: 'http',
-			format: format,
-			behavior: 'domain',
-			url: `${CLASH_SITE_RULE_SET_BASE_URL}geolocation-!cn${ext}`,
-			path: `./ruleset/geolocation-!cn${ext}`,
-			interval: 86400
-		};
+		const acl = getAcl4ssrProviderForTag('geolocation-!cn', 'site');
+		if (acl) {
+			site_rule_providers['geolocation-!cn'] = {
+				type: 'http',
+				format: 'yaml',
+				behavior: 'classical',
+				url: `${acl.base}${acl.file}`,
+				path: `./ruleset/acl4ssr/geolocation-!cn.yaml`,
+				interval: 86400
+			};
+		} else {
+			site_rule_providers['geolocation-!cn'] = {
+				type: 'http',
+				format: format,
+				behavior: 'domain',
+				url: `${CLASH_SITE_RULE_SET_BASE_URL}geolocation-!cn${ext}`,
+				path: `./ruleset/geolocation-!cn${ext}`,
+				interval: 86400
+			};
+		}
 	}
 
 	// Add custom rules
@@ -201,6 +314,7 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 			if (rule.site && rule.site != '') {
 				rule.site.split(',').forEach(site => {
 					const site_trimmed = site.trim();
+					// Custom inputs likely follow the old geosite tag system; keep the original provider source for compatibility.
 					site_rule_providers[site_trimmed] = {
 						type: 'http',
 						format: format,
@@ -214,12 +328,13 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 			if (rule.ip && rule.ip != '') {
 				rule.ip.split(',').forEach(ip => {
 					const ip_trimmed = ip.trim();
-					ip_rule_providers[ip_trimmed] = {
+					const tag = `${ip_trimmed}-ip`;
+					ip_rule_providers[tag] = {
 						type: 'http',
 						format: format,
 						behavior: 'ipcidr',
 						url: `${CLASH_IP_RULE_SET_BASE_URL}${ip_trimmed}${ext}`,
-						path: `./ruleset/${ip_trimmed}${ext}`,
+						path: `./ruleset/${tag}${ext}`,
 						interval: 86400
 					};
 				});
