@@ -156,7 +156,10 @@ export function createApp(bindings = {}) {
                 baseConfig = await storage.getConfigById(configId);
             }
             if (!baseConfig) {
-                baseConfig = THEIGRAMS_CLASH_TEMPLATE;
+                // Default base config:
+                // - template mode: use the built-in sanitized template
+                // - engine mode: fall back to the upstream CLASH_CONFIG inside the builder
+                baseConfig = rulesMode === 'template' ? THEIGRAMS_CLASH_TEMPLATE : undefined;
             }
 
             const builder = new ClashConfigBuilder(
